@@ -1,6 +1,7 @@
-FROM php:8.2.5-fpm-alpine3.17
+FROM surnet/alpine-wkhtmltopdf:3.10-0.12.5-full as wkhtmltopdf
+FROM php:8.2-fpm-alpine3.17
 
-LABEL maintainer="Ric Harvey <ric@squarecows.com>"
+LABEL maintainer="Long Trịnh <trinhhoanglong01@gmail.com>"
 
 ENV php_conf /usr/local/etc/php-fpm.conf
 ENV fpm_conf /usr/local/etc/php-fpm.d/www.conf
@@ -9,10 +10,32 @@ ENV php_vars /usr/local/etc/php/conf.d/docker-vars.ini
 ENV LUAJIT_LIB=/usr/lib
 ENV LUAJIT_INC=/usr/include/luajit-2.1
 
+ENV WEBROOT /jinjer/public
+
+RUN echo 'alias ll="ls -l"' >> ~/.bashrc
+RUN echo 'alias la="ls -la"' >> ~/.bashrc
+
+# wkhtmltopdf install dependencies
+RUN apk add --no-cache \
+        libstdc++ \
+        libx11 \
+        libxrender \
+        libxext \
+        libssl1.1 \
+        ca-certificates \
+        fontconfig \
+        freetype \
+        ttf-droid \
+        ttf-freefont \
+        ttf-liberation \
+        # more fonts
+        ;
+# wkhtmltopdf copy bins from ext image
+COPY --from=wkhtmltopdf /bin/wkhtmltopdf /bin/libwkhtmltox.so /bin/
+
 # resolves #166
 ENV LD_PRELOAD /usr/lib/preloadable_libiconv.so php
 RUN apk add --no-cache --repository http://dl-3.alpinelinux.org/alpine/edge/community gnu-libiconv
-
 
 # INstall nginx + lua and devel kit
 RUN apk add --no-cache nginx \
@@ -44,7 +67,9 @@ RUN echo @testing https://dl-cdn.alpinelinux.org/alpine/edge/testing >> /etc/apk
     libjpeg-turbo-dev \
     freetype-dev \
     libxslt-dev \
-    gcc 
+    nano \
+    vim \
+    gcc
 
 RUN apk add --no-cache --virtual .sys-deps \
     musl-dev \
@@ -72,13 +97,13 @@ RUN apk add --no-cache --virtual .sys-deps \
      pip install --upgrade pip && \
     docker-php-ext-install pdo_mysql mysqli pdo_sqlite pgsql pdo_pgsql exif intl xsl soap zip && \
     pecl install -o -f xdebug && \
-    pecl install -o -f redis && \ 
+    pecl install -o -f redis && \
     pecl install -o -f mongodb && \
     echo "extension=redis.so" > /usr/local/etc/php/conf.d/redis.ini && \
     echo "extension=mongodb.so" > /usr/local/etc/php/conf.d/mongodb.ini && \
     echo "zend_extension=xdebug" > /usr/local/etc/php/conf.d/xdebug.ini && \
     docker-php-source delete && \
-    mkdir -p /var/www/app && \
+    mkdir -p /jinjer && \
   # Install composer and certbot
     mkdir -p /var/log/supervisor && \
     php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" && \
@@ -99,6 +124,7 @@ ADD conf/nginx.conf /etc/nginx/nginx.conf
 # nginx site conf
 RUN mkdir -p /etc/nginx/sites-available/ && \
 mkdir -p /etc/nginx/sites-enabled/ && \
+mkdir -p /etc/nginx/conf.d/ && \
 mkdir -p /etc/nginx/ssl/ && \
 rm -Rf /var/www/* && \
 mkdir /var/www/html/
@@ -127,13 +153,10 @@ RUN echo "cgi.fix_pathinfo=0" > ${php_vars} &&\
         -e "s/listen = 127.0.0.1:9000/listen = \/var\/run\/php-fpm.sock/g" \
         -e "s/^;clear_env = no$/clear_env = no/" \
         ${fpm_conf}
-#    ln -s /etc/php7/php.ini /etc/php7/conf.d/php.ini && \
-RUN cp /usr/local/etc/php/php.ini-development /usr/local/etc/php/php.ini && \
-	sed -i \
-	    -e "s/;opcache/opcache/g" \
-	    -e "s/;zend_extension=opcache/zend_extension=opcache/g" \
-            /usr/local/etc/php/php.ini
 
+RUN docker-php-ext-configure pcntl \
+    && docker-php-ext-install pcntl bcmath \
+    && docker-php-ext-enable pcntl xdebug bcmath
 
 # Add Scripts
 ADD scripts/start.sh /start.sh
@@ -150,5 +173,6 @@ ADD errors/ /var/www/errors
 
 EXPOSE 443 80
 
-WORKDIR "/var/www/html"
+WORKDIR /jinjer
+
 CMD ["/start.sh"]
